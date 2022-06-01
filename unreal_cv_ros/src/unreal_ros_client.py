@@ -13,11 +13,14 @@ from std_srvs.srv import SetBool
 import tf
 
 # Python
+import io
 import sys
 import math
 import numpy as np
 import time
 
+import chardet
+from rospy.numpy_msg import numpy_msg
 
 class UnrealRosClient:
 
@@ -96,7 +99,7 @@ class UnrealRosClient:
             self.previous_odom_msg = None  # Previously processed Odom message
 
         # Finish setup
-        self.pub = rospy.Publisher("~ue_sensor_raw", UeSensorRaw, queue_size=10)
+        self.pub = rospy.Publisher("~ue_sensor_raw", numpy_msg(UeSensorRaw), queue_size=100)
         rospy.Service('~terminate_with_reset', SetBool, self.terminate_with_reset_srv)
         if self.collision_on:
             self.collision_pub = rospy.Publisher("~collision", String, queue_size=10)
@@ -205,7 +208,10 @@ class UnrealRosClient:
         ''' Produce images and broadcast odometry from unreal in-game controlled camera movement '''
         # Get current UE pose
         pose = client.request('vget /camera/%d/pose' % self.camera_id)
-        pose = np.array([float(x) for x in str(pose).split(' ')])
+        if pose is None:
+            return
+        else:
+            pose = np.array([float(x) for x in str(pose).split(' ')])
         position = pose[:3]
         orientation = pose[3:]
 
@@ -223,12 +229,31 @@ class UnrealRosClient:
         res_color = client.request('vget /camera/%d/lit npy' % self.camera_id)
         res_depth = client.request('vget /camera/%d/depth npy' % self.camera_id)
 
-        # Publish data
-        msg = UeSensorRaw()
-        msg.header.stamp = header_stamp
-        msg.color_data = res_color
-        msg.depth_data = res_depth
-        self.pub.publish(msg)
+        try:
+            np_color = np.load(io.BytesIO(bytearray(res_color)))
+            np_depth = np.load(io.BytesIO(bytearray(res_depth)))
+            sh_color = np.array(np_color.shape).astype(np.float32)   # int list 480 * 640 * 4
+            sh_depth = np.array(np_depth.shape).astype(np.float32)   # int list 480 * 640
+            # print(np_color.dtype, np_color.shape)
+            # print(np_depth.dtype, np_depth.shape)
+            np_color = np_color.reshape(-1)
+            np_color = np_color.astype(np.float32)  # float32 ndarray
+            np_depth = np_depth.reshape(-1)         # float32 ndarray
+            # print(np_color.dtype, np_color.shape)
+            # print(np_depth.dtype, np_depth.shape)
+            
+            # Publish data
+            msg = UeSensorRaw()
+            msg.header.stamp = header_stamp
+            msg.color_data = np_color
+            msg.color_shape = sh_color
+            msg.depth_data = np_depth
+            msg.depth_shape = sh_depth
+            self.pub.publish(msg)
+        except TypeError:
+            print('TypeError!! continue...')
+            return
+
 
     def publish_tf_data(self, odom_msg):
         pos = odom_msg.pose.pose.position

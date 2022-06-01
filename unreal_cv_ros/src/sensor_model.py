@@ -17,6 +17,8 @@ import numpy as np
 from struct import pack, unpack
 import time
 
+from rospy.numpy_msg import numpy_msg
+
 
 class SensorModel:
 
@@ -60,7 +62,7 @@ class SensorModel:
 
         # Initialize node
         self.pub = rospy.Publisher("~ue_sensor_out", PointCloud2, queue_size=10)
-        self.sub = rospy.Subscriber("ue_sensor_raw", UeSensorRaw, self.callback, queue_size=10)
+        self.sub = rospy.Subscriber("ue_sensor_raw", numpy_msg(UeSensorRaw), self.callback, queue_size=10)
         if self.publish_color_images or self.publish_gray_images:
             self.cv_bridge = cv_bridge.CvBridge()
         if self.publish_color_images:
@@ -73,8 +75,20 @@ class SensorModel:
     def callback(self, ros_data):
         ''' Produce simulated sensor outputs from raw binary data '''
         # Read out images
-        img_color = np.load(io.BytesIO(bytearray(ros_data.color_data)))
-        img_depth = np.load(io.BytesIO(bytearray(ros_data.depth_data)))
+        raw_color = (ros_data.color_data).astype(np.uint8)
+        c_sh = list((ros_data.color_shape).astype(int))
+        raw_depth = ros_data.depth_data
+        d_sh = list((ros_data.depth_shape).astype(int))
+
+        img_color = raw_color.reshape(c_sh[0], c_sh[1], c_sh[2])
+        img_depth = raw_depth.reshape(d_sh[0], d_sh[1])
+
+        # print(img_color.dtype, img_color.shape)
+        # print(img_depth.dtype, img_depth.shape)
+        
+        # img_color = np.load(io.BytesIO(bytearray(raw_color)))
+        # img_depth = np.load(io.BytesIO(bytearray(raw_depth)))
+        
         mask_depth = img_depth.reshape(-1)
 
         # Build 3D point cloud from depth
@@ -133,8 +147,8 @@ class SensorModel:
     def depth_to_3d(self, img_depth):
         ''' Create point cloud from depth image and camera params. Returns a single array for x, y and z coords '''
         # read camera params and create image mesh
-        height = self.camera_params[1]
-        width = self.camera_params[0]
+        height = int(self.camera_params[1])
+        width = int(self.camera_params[0])
         center_x = width/2
         center_y = height/2
         f = self.camera_params[2]
